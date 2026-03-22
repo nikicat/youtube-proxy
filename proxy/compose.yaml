@@ -1,0 +1,30 @@
+services:
+  proxy:
+    build: .
+    ports:
+      - "443:443"
+    volumes:
+      - ./certs:/certs
+    environment:
+      PROXY_MODE: https
+      PROXY_ADDR: "0.0.0.0:443"
+      CERT_CN: proxy
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./certs:/certs
+    ports:
+      - "80:80"
+    environment:
+      DOMAIN: ${LETSENCRYPT_DOMAIN}
+      EMAIL: ${LETSENCRYPT_EMAIL}
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        certbot certonly --standalone -d $$DOMAIN --non-interactive --agree-tos --email $$EMAIL &&
+        cp /etc/letsencrypt/live/$$DOMAIN/fullchain.pem /certs/proxy.crt &&
+        cp /etc/letsencrypt/live/$$DOMAIN/privkey.pem /certs/proxy.key
+    profiles:
+      - letsencrypt

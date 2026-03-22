@@ -2,7 +2,9 @@
 *.keystore
 youtube-s5-temporary-files/
 youtube-patched.apk
-https-proxy
 libcronet.*.so
+https-proxy
+proxy/proxy
+proxy/certs/
 certs/
 proxy.pac

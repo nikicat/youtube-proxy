@@ -120,9 +120,16 @@ func handleSOCKS5(conn net.Conn) {
 	relay(conn, target)
 }
 
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage: %s <mode> <addr>\n", os.Args[0])
-	fmt.Fprintf(os.Stderr, "  mode: https  - HTTPS CONNECT proxy (requires certs/proxy.crt and certs/proxy.key)\n")
+	fmt.Fprintf(os.Stderr, "  mode: https  - HTTPS CONNECT proxy (certs via CERT_FILE/KEY_FILE env vars)\n")
 	fmt.Fprintf(os.Stderr, "        http   - plain HTTP CONNECT proxy\n")
 	fmt.Fprintf(os.Stderr, "        socks5 - SOCKS5 proxy\n")
 	fmt.Fprintf(os.Stderr, "  addr: listen address (e.g. 0.0.0.0:8443)\n")
@@ -139,7 +146,9 @@ func main() {
 
 	switch mode {
 	case "https":
-		cert, err := tls.LoadX509KeyPair("certs/proxy.crt", "certs/proxy.key")
+		certFile := getenv("CERT_FILE", "/certs/proxy.crt")
+		keyFile := getenv("KEY_FILE", "/certs/proxy.key")
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 		if err != nil {
 			log.Fatalf("Failed to load cert: %v", err)
 		}

@@ -38,7 +38,7 @@ SOCKS5 traffic is distinguishable from regular HTTPS — different protocol, typ
 
 - **Android SDK**: `zipalign`, `apksigner` (from build-tools)
 - **Java 17+**: For ReVanced CLI and Gradle
-- **Go**: For the HTTPS proxy server
+- **Docker** (or **Go**): For the proxy server
 - **revanced-cli**: Download from [ReVanced releases](https://github.com/ReVanced/revanced-cli/releases) and place at `revanced-patches/revanced-cli.jar`
 - **BouncyCastle JAR**: For BKS keystore signing (e.g. `bcprov-jdk15to18-*.jar`)
 - **YouTube APK**: `com.google.android.youtube@20.12.46.apk` (place in repo root)
@@ -109,30 +109,43 @@ Output: `youtube-s5.apk`
 
 ## Proxy Server Setup
 
-### HTTPS CONNECT Proxy (recommended)
-
-Build and run the included Go proxy:
+### Docker (recommended)
 
 ```bash
-# Generate TLS certificate
-mkdir -p certs
-openssl req -x509 -newkey rsa:2048 -keyout certs/proxy.key -out certs/proxy.crt \
-  -days 3650 -nodes -subj "/CN=your-proxy-host" -addext "subjectAltName=DNS:your-proxy-host"
-
-# Build and run
-go build -o https-proxy proxy.go
-./https-proxy 0.0.0.0:443
+cd proxy
+docker compose up -d
 ```
 
-For self-signed certs, install the CA on Android (Settings > Security > Install certificate) and the APK includes the "Override certificate pinning" patch to trust user CAs.
+This starts an HTTPS CONNECT proxy on port 443 with an auto-generated self-signed certificate.
 
-For production, use a real domain with Let's Encrypt — no CA installation needed.
+**Self-signed cert** — install `proxy/certs/proxy.crt` on Android (Settings > Security > Install certificate). The APK includes the "Override certificate pinning" patch to trust user CAs.
 
-### SOCKS5 Proxy (alternative)
+**Let's Encrypt** — for a real domain (no CA installation needed):
 
 ```bash
-# Using dante
-sockd -f sockd.conf
+LETSENCRYPT_DOMAIN=proxy.example.com LETSENCRYPT_EMAIL=you@example.com \
+  docker compose --profile letsencrypt run certbot
+docker compose up -d
+```
+
+### Deploying to a server with Let's Encrypt
+
+On a fresh Ubuntu server with Docker and a domain pointing to it:
+
+```bash
+git clone https://github.com/nikicat/youtube-proxy.git
+cd youtube-proxy/proxy
+
+LETSENCRYPT_DOMAIN=proxy.example.com LETSENCRYPT_EMAIL=you@example.com \
+  docker compose --profile letsencrypt run certbot
+docker compose up -d
+```
+
+Certs are stored in a Docker volume and persist across restarts. To renew (certs expire after 90 days):
+
+```bash
+docker compose --profile letsencrypt run certbot
+docker compose restart proxy
 ```
 
 ### App Configuration
@@ -162,12 +175,10 @@ The phone can still reach the proxy (local to the exit node), but can't access t
 | File | Description |
 |------|-------------|
 | `build.sh` | Builds everything: Cronet, patches, APK |
-| `proxy.go` | HTTPS CONNECT proxy server (Go) |
+| `build-cronet.sh` | Builds Cronet from source (optional) |
+| `proxy/` | Proxy server with Dockerfile and compose.yaml |
 | `patches/cronet-proxy-support.patch` | Chromium/Cronet source patch |
 | `revanced-patches/` | ReVanced patches submodule (bytecode + Java extensions) |
-| `sockd.conf` | Dante SOCKS5 proxy config (example) |
-| `stunnel.conf` | stunnel TLS wrapper config (example) |
-| `tinyproxy.conf` | tinyproxy HTTP CONNECT config (example) |
 
 ## Key Technical Decisions
 
