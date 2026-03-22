@@ -36,7 +36,6 @@ SOCKS5 traffic is distinguishable from regular HTTPS — different protocol, typ
 
 ## Prerequisites
 
-- **Chromium build tools**: [depot_tools](https://chromium.googlesource.com/chromium/tools/depot_tools.git), ~100GB disk for source + build
 - **Android SDK**: `zipalign`, `apksigner` (from build-tools)
 - **Java 17+**: For ReVanced CLI and Gradle
 - **Go**: For the HTTPS proxy server
@@ -44,7 +43,9 @@ SOCKS5 traffic is distinguishable from regular HTTPS — different protocol, typ
 - **BouncyCastle JAR**: For BKS keystore signing (e.g. `bcprov-jdk15to18-*.jar`)
 - **YouTube APK**: `com.google.android.youtube@20.12.46.apk` (place in repo root)
 
-## Building Cronet from Source
+## Building Cronet from Source (optional)
+
+The build script automatically downloads a prebuilt `libcronet.*.so` from [GitHub Releases](https://github.com/nikicat/youtube-proxy/releases). You only need to build from source if you want to modify the Cronet patch.
 
 One-time setup (~2-4 hours, ~100GB disk):
 
@@ -79,6 +80,13 @@ ninja -C out/Cronet cronet_package -j$(nproc)
 
 Output: `out/Cronet/cronet/libs/arm64-v8a/libcronet.135.0.7012.3.so`
 
+To rebuild and use your local build:
+
+```bash
+./build-cronet.sh   # builds and copies .so to repo root
+./build.sh           # uses the local .so instead of downloading
+```
+
 ## Building the APK
 
 ```bash
@@ -91,7 +99,7 @@ git submodule update --init
 ```
 
 The build script:
-1. Builds Cronet (incremental, fast if already built)
+1. Downloads prebuilt Cronet .so from GitHub Releases (cached locally)
 2. Builds ReVanced patches with Gradle
 3. Patches the YouTube APK with revanced-cli
 4. Replaces `libcronet.135.0.7012.3.so` with our custom build

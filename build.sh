@@ -2,9 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CRONET_SRC="${CRONET_SRC:-$HOME/src/cronet/chromium/src}"
 REVANCED_DIR="$SCRIPT_DIR/revanced-patches"
-DEPOT_TOOLS="${DEPOT_TOOLS:-$HOME/src/cronet/depot_tools}"
+
+CRONET_VERSION="135.0.7012.3"
+CRONET_SO_NAME="libcronet.${CRONET_VERSION}.so"
+CRONET_SO="$SCRIPT_DIR/$CRONET_SO_NAME"
+CRONET_RELEASE_URL="https://github.com/nikicat/youtube-proxy/releases/download/cronet-${CRONET_VERSION}/${CRONET_SO_NAME}"
 
 BASE_APK="$SCRIPT_DIR/com.google.android.youtube@20.12.46.apk"
 KEYSTORE="$SCRIPT_DIR/youtube-s5.keystore"
@@ -17,13 +20,14 @@ PATCHES="$(ls "$REVANCED_DIR"/patches/build/libs/patches-*.rvp 2>/dev/null | gre
 BC_JAR="${BC_JAR:-$(find /usr -name 'bcprov-jdk*.jar' 2>/dev/null | head -1)}"
 APK_JAR="${APK_JAR:-$(dirname "$(which apksigner 2>/dev/null || echo /opt/android-sdk/build-tools/36.1.0/apksigner)")/lib/apksigner.jar}"
 
-export PATH="$DEPOT_TOOLS:$PATH"
-
-# --- Step 1: Build Cronet ---
-echo "==> Building Cronet..."
-ninja -C "$CRONET_SRC/out/Cronet" cronet_package -j8
-CRONET_SO="$CRONET_SRC/out/Cronet/cronet/libs/arm64-v8a/libcronet.135.0.7012.3.so"
-echo "    Built: $CRONET_SO ($(du -h "$CRONET_SO" | cut -f1))"
+# --- Step 1: Download prebuilt Cronet ---
+if [ ! -f "$CRONET_SO" ]; then
+    echo "==> Downloading prebuilt Cronet ${CRONET_VERSION}..."
+    curl -fL -o "$CRONET_SO" "$CRONET_RELEASE_URL"
+    echo "    Downloaded: $CRONET_SO ($(du -h "$CRONET_SO" | cut -f1))"
+else
+    echo "==> Using cached Cronet: $CRONET_SO ($(du -h "$CRONET_SO" | cut -f1))"
+fi
 
 # --- Step 2: Build ReVanced patches and patch APK ---
 echo "==> Building ReVanced patches..."
@@ -47,8 +51,8 @@ cp "$CRONET_SO" "$TMPDIR/lib/arm64-v8a/"
 cp "$OUTPUT" "$TMPDIR/youtube-s5.apk"
 
 (cd "$TMPDIR" && \
-    zip -d youtube-s5.apk lib/arm64-v8a/libcronet.135.0.7012.3.so && \
-    zip -0 youtube-s5.apk lib/arm64-v8a/libcronet.135.0.7012.3.so) > /dev/null
+    zip -d youtube-s5.apk "lib/arm64-v8a/$CRONET_SO_NAME" && \
+    zip -0 youtube-s5.apk "lib/arm64-v8a/$CRONET_SO_NAME") > /dev/null
 
 # --- Step 4: Re-align and re-sign ---
 echo "==> Signing APK..."
