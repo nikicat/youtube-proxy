@@ -148,6 +148,27 @@ docker compose --profile letsencrypt run certbot
 docker compose restart proxy
 ```
 
+### Behind a reverse proxy (nginx, Caddy, etc.)
+
+The proxy supports `http` mode — plain HTTP CONNECT without TLS. Let the reverse proxy handle SSL termination:
+
+```bash
+PROXY_MODE=http PROXY_PORT=8080 docker compose up -d
+```
+
+Example nginx **stream** config (HTTP CONNECT uses raw TCP, not HTTP forwarding):
+
+```nginx
+stream {
+    server {
+        listen 443 ssl;
+        ssl_certificate /etc/letsencrypt/live/proxy.example.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/proxy.example.com/privkey.pem;
+        proxy_pass localhost:8080;
+    }
+}
+```
+
 ### App Configuration
 
 In the YouTube S5 app: Settings > SOCKS5 proxy:
