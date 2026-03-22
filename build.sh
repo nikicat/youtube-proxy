@@ -2,17 +2,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CRONET_SRC="$HOME/src/cronet/chromium/src"
-REVANCED_DIR="$HOME/src/revanced-patches"
-DEPOT_TOOLS="$HOME/src/cronet/depot_tools"
+CRONET_SRC="${CRONET_SRC:-$HOME/src/cronet/chromium/src}"
+REVANCED_DIR="$SCRIPT_DIR/revanced-patches"
+DEPOT_TOOLS="${DEPOT_TOOLS:-$HOME/src/cronet/depot_tools}"
 
 BASE_APK="$SCRIPT_DIR/com.google.android.youtube@20.12.46.apk"
 KEYSTORE="$SCRIPT_DIR/youtube-s5.keystore"
 OUTPUT="$SCRIPT_DIR/youtube-s5.apk"
-PATCHES="$REVANCED_DIR/patches/build/libs/patches-3.16.0.rvp"
 
-BC_JAR="/var/lib/archbuild/extra-x86_64/nb-4/build/bisq/pkg/bisq/opt/bisq/lib/bcprov-jdk15to18-1.63.jar"
-APK_JAR="/opt/android-sdk/build-tools/36.1.0/lib/apksigner.jar"
+# Find the patches .rvp (version may vary)
+PATCHES="$(ls "$REVANCED_DIR"/patches/build/libs/patches-*.rvp 2>/dev/null | grep -v sources | grep -v javadoc | head -1)"
+
+# BouncyCastle provider jar (needed for BKS keystore signing)
+BC_JAR="${BC_JAR:-$(find /usr -name 'bcprov-jdk*.jar' 2>/dev/null | head -1)}"
+APK_JAR="${APK_JAR:-$(dirname "$(which apksigner 2>/dev/null || echo /opt/android-sdk/build-tools/36.1.0/apksigner)")/lib/apksigner.jar}"
 
 export PATH="$DEPOT_TOOLS:$PATH"
 
@@ -29,9 +32,10 @@ echo "==> Building ReVanced patches..."
 echo "==> Patching APK..."
 java -jar "$REVANCED_DIR/revanced-cli.jar" patch \
     -p "$PATCHES" \
+    -e "Override certificate pinning" \
     -o "$OUTPUT" \
     -f \
-    "$BASE_APK" 2>&1 | grep -E "INFO: Saved|SEVERE|socks5|SOCKS5" || true
+    "$BASE_APK" 2>&1 | grep -E "INFO: Saved|SEVERE|socks5|SOCKS5|certificate" || true
 
 # --- Step 3: Inject custom Cronet .so ---
 echo "==> Injecting custom Cronet .so..."

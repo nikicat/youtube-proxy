@@ -1,0 +1,110 @@
+diff --git a/build/android/gyp/jinja_template.py b/build/android/gyp/jinja_template.py
+index 4a242683a6f5f..fa52ae343353c 100755
+--- a/build/android/gyp/jinja_template.py
++++ b/build/android/gyp/jinja_template.py
+@@ -111,7 +111,7 @@ def main():
+   parser.add_argument('--inputs', required=True,
+                       help='GN-list of template files to process.')
+   parser.add_argument('--includes', default='',
+-                      help="GN-list of files that get {% include %}'ed.")
++                      help="GN-list of files that get {%% include %%}'ed.")
+   parser.add_argument('--output', help='The output file to generate. Valid '
+                       'only if there is a single input.')
+   parser.add_argument('--outputs-zip', help='A zip file for the processed '
+diff --git a/components/cronet/cronet_context.cc b/components/cronet/cronet_context.cc
+index b91e46e047004..6667b3f9dbe1c 100644
+--- a/components/cronet/cronet_context.cc
++++ b/components/cronet/cronet_context.cc
+@@ -56,7 +56,10 @@
+ #include "net/log/net_log_util.h"
+ #include "net/net_buildflags.h"
+ #include "net/nqe/network_quality_estimator_params.h"
++#include "net/proxy_resolution/proxy_config.h"
++#include "net/traffic_annotation/network_traffic_annotation.h"
+ #include "net/proxy_resolution/proxy_config_service_fixed.h"
++#include "net/proxy_resolution/proxy_config_with_annotation.h"
+ #include "net/proxy_resolution/proxy_resolution_service.h"
+ #include "net/third_party/quiche/src/quiche/quic/core/quic_versions.h"
+ #include "net/url_request/url_request_context.h"
+@@ -358,9 +361,21 @@ CronetContext::NetworkTasks::BuildDefaultURLRequestContext(
+   context_config_->ConfigureURLRequestContextBuilder(&context_builder);
+   SetSharedURLRequestContextBuilderConfig(&context_builder);
+ 
+-  context_builder.set_proxy_resolution_service(
+-      cronet::CreateProxyResolutionService(std::move(proxy_config_service),
+-                                           g_net_log.Get().net_log()));
++  if (!context_config_->proxy_rules.empty()) {
++    // Use fixed proxy config with the specified proxy rules
++    // (e.g. "socks5://host:port").
++    net::ProxyConfig proxy_config;
++    proxy_config.proxy_rules().ParseFromString(
++        context_config_->proxy_rules);
++    context_builder.set_proxy_config_service(
++        std::make_unique<net::ProxyConfigServiceFixed>(
++            net::ProxyConfigWithAnnotation(
++                proxy_config, MISSING_TRAFFIC_ANNOTATION)));
++  } else {
++    context_builder.set_proxy_resolution_service(
++        cronet::CreateProxyResolutionService(std::move(proxy_config_service),
++                                             g_net_log.Get().net_log()));
++  }
+ 
+   if (context_config_->enable_network_quality_estimator) {
+     std::unique_ptr<net::NetworkQualityEstimatorParams> nqe_params =
+diff --git a/components/cronet/url_request_context_config.cc b/components/cronet/url_request_context_config.cc
+index 4816ee6db7e84..6ee7512bdefab 100644
+--- a/components/cronet/url_request_context_config.cc
++++ b/components/cronet/url_request_context_config.cc
+@@ -131,6 +131,9 @@ const char kStaleDnsUseStaleOnNameNotResolved[] =
+ const char kHostResolverRulesFieldTrialName[] = "HostResolverRules";
+ const char kHostResolverRules[] = "host_resolver_rules";
+ 
++// Proxy rules string (e.g. "socks5://host:port").
++const char kProxyRules[] = "proxy_rules";
++
+ // NetworkQualityEstimator (NQE) experiment dictionary name.
+ const char kNetworkQualityEstimatorFieldTrialName[] = "NetworkQualityEstimator";
+ 
+@@ -711,6 +714,14 @@ void URLRequestContextConfig::SetContextBuilderExperimentalOptions(
+         continue;
+       }
+       session_params->spdy_go_away_on_ip_change = iter->second.GetBool();
++    } else if (iter->first == kProxyRules) {
++      if (!iter->second.is_string()) {
++        LOG(ERROR) << "\"" << iter->first << "\" config param \""
++                   << iter->second << "\" is not a string";
++        effective_experimental_options.Remove(iter->first);
++        continue;
++      }
++      proxy_rules = iter->second.GetString();
+     } else {
+       LOG(WARNING) << "Unrecognized Cronet experimental option \""
+                    << iter->first << "\" with params \"" << iter->second;
+diff --git a/components/cronet/url_request_context_config.h b/components/cronet/url_request_context_config.h
+index 3ce700f953184..ca4b388eb606f 100644
+--- a/components/cronet/url_request_context_config.h
++++ b/components/cronet/url_request_context_config.h
+@@ -168,6 +168,10 @@ struct URLRequestContextConfig {
+   // On Android, corresponds to android.os.Process.setThreadPriority() values.
+   const std::optional<int> network_thread_priority;
+ 
++  // Proxy rules string (e.g. "socks5://host:port") set via experimental
++  // options. When non-empty, overrides the system proxy configuration.
++  std::string proxy_rules;
++
+   // Whether the connection status of active bidirectional streams should be
+   // monitored.
+   bool bidi_stream_detect_broken_connection;
+
+--- /dev/null
++++ b/build/__init__.py
+@@ -0,0 +1 @@
++
+--- /dev/null
++++ b/build/android/__init__.py
+@@ -0,0 +1 @@
++
+--- /dev/null
++++ b/build/android/gyp/__init__.py
+@@ -0,0 +1 @@
++

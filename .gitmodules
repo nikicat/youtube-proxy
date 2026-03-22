@@ -1,0 +1,4 @@
+[submodule "revanced-patches"]
+	path = revanced-patches
+	url = git@github.com:nikicat/revanced-patches.git
+	branch = youtube-proxy
