@@ -9,18 +9,19 @@ CRONET_SO_NAME="libcronet.${CRONET_VERSION}.so"
 CRONET_SO="$SCRIPT_DIR/$CRONET_SO_NAME"
 CRONET_RELEASE_URL="https://github.com/nikicat/youtube-proxy/releases/download/cronet-${CRONET_VERSION}/${CRONET_SO_NAME}"
 
+REVANCED_CLI_VERSION="5.0.1"
+REVANCED_CLI_URL="https://github.com/ReVanced/revanced-cli/releases/download/v${REVANCED_CLI_VERSION}/revanced-cli-${REVANCED_CLI_VERSION}-all.jar"
+
 BASE_APK="$SCRIPT_DIR/com.google.android.youtube@20.12.46.apk"
 KEYSTORE="$SCRIPT_DIR/youtube-s5.keystore"
 OUTPUT="$SCRIPT_DIR/youtube-s5.apk"
 
-# Find the patches .rvp (version may vary)
-PATCHES="$(ls "$REVANCED_DIR"/patches/build/libs/patches-*.rvp 2>/dev/null | grep -v sources | grep -v javadoc | head -1)"
+# Tool jars
+BC_JAR="${BC_JAR:-/usr/share/java/bcprov/bcprov.jar}"
+APK_JAR="${APK_JAR:-$(dirname "$(readlink -f "$(which apksigner)")")/lib/apksigner.jar}"
+REVANCED_CLI="${REVANCED_CLI:-$REVANCED_DIR/revanced-cli.jar}"
 
-# BouncyCastle provider jar (needed for BKS keystore signing)
-BC_JAR="${BC_JAR:-$(find /usr -name 'bcprov-jdk*.jar' 2>/dev/null | head -1)}"
-APK_JAR="${APK_JAR:-$(dirname "$(which apksigner 2>/dev/null || echo /opt/android-sdk/build-tools/36.1.0/apksigner)")/lib/apksigner.jar}"
-
-# --- Step 1: Download prebuilt Cronet ---
+# --- Step 1: Download dependencies ---
 if [ ! -f "$CRONET_SO" ]; then
     echo "==> Downloading prebuilt Cronet ${CRONET_VERSION}..."
     curl -fL -o "$CRONET_SO" "$CRONET_RELEASE_URL"
@@ -29,12 +30,27 @@ else
     echo "==> Using cached Cronet: $CRONET_SO ($(du -h "$CRONET_SO" | cut -f1))"
 fi
 
+if [ ! -f "$REVANCED_CLI" ]; then
+    echo "==> Downloading ReVanced CLI v${REVANCED_CLI_VERSION}..."
+    curl -fL -o "$REVANCED_CLI" "$REVANCED_CLI_URL"
+    echo "    Downloaded: $REVANCED_CLI ($(du -h "$REVANCED_CLI" | cut -f1))"
+else
+    echo "==> Using cached ReVanced CLI: $REVANCED_CLI"
+fi
+
 # --- Step 2: Build ReVanced patches and patch APK ---
 echo "==> Building ReVanced patches..."
 (cd "$REVANCED_DIR" && ./gradlew build -q)
 
+# Find the patches .rvp (version may vary, must be after build)
+PATCHES="$(ls "$REVANCED_DIR"/patches/build/libs/patches-*.rvp 2>/dev/null | grep -v sources | grep -v javadoc | head -1)"
+if [ -z "$PATCHES" ]; then
+    echo "ERROR: No .rvp file found after build" >&2
+    exit 1
+fi
+
 echo "==> Patching APK..."
-java -jar "$REVANCED_DIR/revanced-cli.jar" patch \
+java -jar "$REVANCED_CLI" patch \
     -p "$PATCHES" \
     -e "Override certificate pinning" \
     -o "$OUTPUT" \
