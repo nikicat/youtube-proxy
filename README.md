@@ -148,7 +148,7 @@ docker compose --profile letsencrypt run certbot
 docker compose restart proxy
 ```
 
-### Behind a reverse proxy (nginx, Caddy, etc.)
+### Behind a reverse proxy (Traefik, nginx, etc.)
 
 The proxy supports `http` mode — plain HTTP CONNECT without TLS. Let the reverse proxy handle SSL termination:
 
@@ -156,7 +156,31 @@ The proxy supports `http` mode — plain HTTP CONNECT without TLS. Let the rever
 PROXY_MODE=http PROXY_PORT=8080 docker compose up -d
 ```
 
-Example nginx **stream** config (HTTP CONNECT uses raw TCP, not HTTP forwarding):
+**Important:** The reverse proxy must **not** negotiate HTTP/2 (ALPN `h2`) for this service. The proxy only speaks HTTP/1.1 — if a client negotiates h2, it will send HTTP/2 binary frames that the proxy can't parse (`ERR_HTTP2_PROTOCOL_ERROR`).
+
+**Traefik** — define a TLS option and reference it from the router:
+
+```yaml
+# Dynamic config file (e.g. config/routers.yml)
+tls:
+  options:
+    http1only:
+      alpnProtocols:
+        - http/1.1
+```
+
+```yaml
+# Docker labels on the proxy container
+labels:
+  - "traefik.enable=true"
+  - "traefik.tcp.routers.youtube-proxy.entrypoints=websecure"
+  - "traefik.tcp.routers.youtube-proxy.rule=HostSNI(`proxy.example.com`)"
+  - "traefik.tcp.routers.youtube-proxy.tls.certResolver=letsencrypt"
+  - "traefik.tcp.routers.youtube-proxy.tls.options=http1only@file"
+  - "traefik.tcp.services.youtube-proxy.loadbalancer.server.port=8080"
+```
+
+**nginx** — use a `stream` block (HTTP CONNECT is raw TCP, not HTTP forwarding) and disable HTTP/2:
 
 ```nginx
 stream {
@@ -164,6 +188,8 @@ stream {
         listen 443 ssl;
         ssl_certificate /etc/letsencrypt/live/proxy.example.com/fullchain.pem;
         ssl_certificate_key /etc/letsencrypt/live/proxy.example.com/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        proxy_ssl_alpn http/1.1;
         proxy_pass localhost:8080;
     }
 }
