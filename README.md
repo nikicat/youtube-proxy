@@ -83,8 +83,8 @@ Output: `out/Cronet/cronet/libs/arm64-v8a/libcronet.135.0.7012.3.so`
 To rebuild and use your local build:
 
 ```bash
-./build-cronet.sh   # builds and copies .so to repo root
-./build.sh           # uses the local .so instead of downloading
+make cronet-build   # builds and copies .so to repo root
+make                # uses the local .so instead of downloading
 ```
 
 ## Building the APK
@@ -93,19 +93,26 @@ To rebuild and use your local build:
 # Initialize submodule
 git submodule update --init
 
-# Place YouTube APK and revanced-cli in repo root
-# Then build:
-./build.sh
+# Place YouTube APK in repo root, then build:
+make
+
+# Install to connected device:
+make install
 ```
 
-The build script:
-1. Downloads prebuilt Cronet .so from GitHub Releases (cached locally)
+The build:
+1. Downloads prebuilt Cronet .so and ReVanced CLI from GitHub Releases (cached locally)
 2. Builds ReVanced patches with Gradle
 3. Patches the YouTube APK with revanced-cli
 4. Replaces `libcronet.135.0.7012.3.so` with our custom build
 5. Re-aligns and re-signs the APK
 
 Output: `youtube-s5.apk`
+
+Override build parameters with `make VAR=value`:
+- `APP_NAME` — output APK name and keystore prefix (default: `youtube-s5`)
+- `CRONET_VERSION` — Cronet library version (default: `135.0.7012.3`)
+- `BASE_APK` — source YouTube APK filename
 
 ## Proxy Server Setup
 
@@ -221,8 +228,7 @@ The phone can still reach the proxy (local to the exit node), but can't access t
 
 | File | Description |
 |------|-------------|
-| `build.sh` | Builds everything: Cronet, patches, APK |
-| `build-cronet.sh` | Builds Cronet from source (optional) |
+| `Makefile` | Build system: `make`, `make install`, `make cronet-build` |
 | `proxy/` | Proxy server with Dockerfile and compose.yaml |
 | `patches/cronet-proxy-support.patch` | Chromium/Cronet source patch |
 | `revanced-patches/` | ReVanced patches submodule (bytecode + Java extensions) |

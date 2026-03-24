@@ -1,10 +1,12 @@
 *.apk
 *.keystore
-youtube-s5-temporary-files/
-youtube-patched.apk
+*-temporary-files/
+*-patched.apk
 libcronet.*.so
 https-proxy
 proxy/proxy
 proxy/certs/
 certs/
 proxy.pac
+build/
+.patches-built
