@@ -10,3 +10,5 @@ certs/
 proxy.pac
 build/
 .patches-built
+apkmd
+apps.json
