@@ -13,7 +13,7 @@ REVANCED_CLI_VERSION ?= 5.0.1
 APKMD_VERSION        ?= 2.0.10
 APP_PACKAGE          ?= com.youtube.s5
 YT_VERSION           ?= 20.05.46
-BASE_APK             ?= com.google.android.youtube@$(YT_VERSION).apk
+BASE_APK_NAME        ?= com.google.android.youtube@$(YT_VERSION).apk
 
 CRONET_SRC           ?= $(HOME)/src/cronet/chromium/src
 DEPOT_TOOLS          ?= $(HOME)/src/cronet/depot_tools
@@ -26,12 +26,14 @@ KS_PASS              ?= pass:
 KS_TYPE              ?= BKS
 
 # === Derived paths ===
-CRONET_SO       := libcronet.$(CRONET_VERSION).so
-REVANCED_CLI    := revanced-patches/revanced-cli.jar
-APKMD           := apkmd
-OUTPUT          := $(APP_PACKAGE).apk
-PATCHED_APK     := $(APP_PACKAGE)-patched.apk
 BUILDDIR        := build
+DLDIR           := dl
+CRONET_SO       := $(DLDIR)/libcronet.$(CRONET_VERSION).so
+REVANCED_CLI    := $(DLDIR)/revanced-cli.jar
+APKMD           := $(DLDIR)/apkmd
+BASE_APK        := $(DLDIR)/$(BASE_APK_NAME)
+PATCHED_APK     := $(BUILDDIR)/$(APP_PACKAGE)-patched.apk
+OUTPUT          := $(BUILDDIR)/$(APP_PACKAGE).apk
 
 CRONET_URL      := https://github.com/nikicat/youtube-proxy/releases/download/cronet-$(CRONET_VERSION)/$(CRONET_SO)
 REVANCED_CLI_URL := https://github.com/ReVanced/revanced-cli/releases/download/v$(REVANCED_CLI_VERSION)/revanced-cli-$(REVANCED_CLI_VERSION)-all.jar
@@ -42,30 +44,39 @@ APKMD_URL       := https://github.com/tanishqmanuja/apkmirror-downloader/release
 # avoiding expanding hundreds of files as prerequisites.
 PATCHES_DIRS := revanced-patches/patches/src revanced-patches/extensions/shared/src
 
-.PHONY: all install uninstall clean distclean cronet-build
+.PHONY: all install uninstall uninstall-all clean clean-all distclean cronet-build
 
 all: $(OUTPUT)
 
 install: $(OUTPUT)
-	adb install -d $<
+	adb install -r -d $<
 
 uninstall:
 	adb uninstall $(APP_PACKAGE)
 
+uninstall-all:
+	@for uid in $$(adb shell pm list users | grep -oP 'UserInfo\{\K[0-9]+'); do \
+		echo "Uninstalling $(APP_PACKAGE) for user $$uid"; \
+		adb shell pm uninstall --user $$uid $(APP_PACKAGE) || true; \
+	done
+
 # === Downloads (Make skips if file exists and has no newer deps) ===
 
-$(CRONET_SO):
+$(CRONET_SO): | $(DLDIR)
 	curl -fL -o $@ $(CRONET_URL)
 
-$(REVANCED_CLI):
+$(REVANCED_CLI): | $(DLDIR)
 	curl -fL -o $@ $(REVANCED_CLI_URL)
 
-$(APKMD):
+$(APKMD): | $(DLDIR)
 	curl -fL -o $@ $(APKMD_URL)
 	chmod +x $@
 
-$(BASE_APK): $(APKMD)
-	./$(APKMD) download google-inc youtube -v "$(YT_VERSION)" -a arm64-v8a -t apk --outdir . -o "$(basename $(BASE_APK))"
+$(BASE_APK): $(APKMD) | $(DLDIR)
+	./$(APKMD) download google-inc youtube -v "$(YT_VERSION)" -a arm64-v8a -t apk --outdir $(DLDIR) -o "$(basename $(BASE_APK_NAME))"
+
+$(DLDIR):
+	mkdir -p $@
 
 # === Build ReVanced patches ===
 
@@ -77,29 +88,43 @@ FORCE:
 
 # === Patch APK with ReVanced CLI ===
 # The .rvp filename includes a version from gradle.properties, found via glob.
-# revanced-cli creates $(APP_PACKAGE)-temporary-files/ as a side effect.
+# NB: -O must immediately precede its -e; picocli binds options to the prior -e otherwise.
 
 $(PATCHED_APK): .patches-built $(REVANCED_CLI) $(BASE_APK)
+	@mkdir -p $(BUILDDIR)
 	RVP=$$(ls revanced-patches/patches/build/libs/patches-*.rvp 2>/dev/null | grep -v sources | grep -v javadoc | head -1); \
 	test -n "$$RVP" || { echo "ERROR: No .rvp found after build"; exit 1; }; \
 	java -jar $(REVANCED_CLI) patch \
 		-p "$$RVP" \
+		-O "packageNameYouTube=$(APP_PACKAGE)" -e "GmsCore support" \
 		-e "Override certificate pinning" \
-		-O "packageNameYouTube=$(APP_PACKAGE)" \
+		-t $(CURDIR)/$(BUILDDIR)/temporary-files \
 		-o $@ \
 		-f \
 		$(BASE_APK)
+
+# === Signing keystore (auto-generated if missing) ===
+
+$(KEYSTORE):
+	keytool -genkeypair -v \
+		-keystore $@ -storetype $(KS_TYPE) \
+		-alias "$(KS_ALIAS)" -keyalg EC \
+		-storepass "$(subst pass:,,$(KS_PASS))" -keypass "$(subst pass:,,$(KS_PASS))" \
+		-dname "CN=ReVanced" \
+		-providerclass org.bouncycastle.jce.provider.BouncyCastleProvider \
+		-providerpath $(BC_JAR)
 
 # === Final APK: inject Cronet .so, align, sign ===
 
 $(OUTPUT): $(PATCHED_APK) $(CRONET_SO) $(KEYSTORE)
 	@mkdir -p $(BUILDDIR)/lib/arm64-v8a
-	cp $(PATCHED_APK) $(BUILDDIR)/$(APP_PACKAGE).apk
+	cp $(PATCHED_APK) $@.tmp
 	cp $(CRONET_SO) $(BUILDDIR)/lib/arm64-v8a/
-	cd $(BUILDDIR) && zip -d $(APP_PACKAGE).apk "lib/arm64-v8a/$(CRONET_SO)" 2>/dev/null || true
-	cd $(BUILDDIR) && zip -0 $(APP_PACKAGE).apk "lib/arm64-v8a/$(CRONET_SO)"
-	zip -d $(BUILDDIR)/$(APP_PACKAGE).apk "META-INF/*" 2>/dev/null || true
-	zipalign -f 4 $(BUILDDIR)/$(APP_PACKAGE).apk $(BUILDDIR)/$(APP_PACKAGE)-aligned.apk
+	# Replace Cronet .so: delete old entry (may not exist on first build) then add uncompressed.
+	@cd $(BUILDDIR) && zip -d $(notdir $@).tmp "lib/arm64-v8a/$(notdir $(CRONET_SO))" >/dev/null 2>&1 || true
+	cd $(BUILDDIR) && zip -0 $(notdir $@).tmp "lib/arm64-v8a/$(notdir $(CRONET_SO))"
+	@zip -d $@.tmp "META-INF/*" >/dev/null 2>&1 || true
+	zipalign -f 4 $@.tmp $@.aligned
 	java -cp "$(APK_JAR):$(BC_JAR)" com.android.apksigner.ApkSignerTool sign \
 		--ks $(KEYSTORE) \
 		--ks-pass "$(KS_PASS)" \
@@ -107,8 +132,9 @@ $(OUTPUT): $(PATCHED_APK) $(CRONET_SO) $(KEYSTORE)
 		--ks-key-alias "$(KS_ALIAS)" \
 		--key-pass "$(KS_PASS)" \
 		--provider-class org.bouncycastle.jce.provider.BouncyCastleProvider \
-		$(BUILDDIR)/$(APP_PACKAGE)-aligned.apk
-	mv $(BUILDDIR)/$(APP_PACKAGE)-aligned.apk $@
+		$@.aligned
+	mv $@.aligned $@
+	rm -f $@.tmp
 	@echo "==> Done: $@ ($$(du -h $@ | cut -f1))"
 
 # === Build Cronet from source (optional, rare) ===
@@ -124,15 +150,20 @@ cronet-build: patches/cronet-proxy-support.patch
 	      "$(CRONET_SRC)/build/android/__init__.py" \
 	      "$(CRONET_SRC)/build/android/gyp/__init__.py"
 	PATH="$(DEPOT_TOOLS):$$PATH" ninja -C "$(CRONET_SRC)/out/Cronet" cronet_package -j$$(nproc)
-	cp "$(CRONET_SRC)/out/Cronet/cronet/libs/arm64-v8a/$(CRONET_SO)" $(CRONET_SO)
+	mkdir -p $(DLDIR)
+	cp "$(CRONET_SRC)/out/Cronet/cronet/libs/arm64-v8a/libcronet.$(CRONET_VERSION).so" $(CRONET_SO)
 	@echo "==> Built: $(CRONET_SO) ($$(du -h $(CRONET_SO) | cut -f1))"
 
 # === Cleanup ===
 
 clean:
-	rm -rf $(BUILDDIR) $(PATCHED_APK) $(OUTPUT) .patches-built
-	rm -rf $(APP_PACKAGE)-temporary-files
+	rm -f $(BUILDDIR)/$(APP_PACKAGE)-patched.apk $(BUILDDIR)/$(APP_PACKAGE).apk
+	rm -f $(BUILDDIR)/$(APP_PACKAGE)-patched.keystore $(BUILDDIR)/$(APP_PACKAGE).apk.aligned.idsig
+	rm -rf $(BUILDDIR)/temporary-files
 
-distclean: clean
-	rm -f $(CRONET_SO) $(REVANCED_CLI) $(APKMD) $(BASE_APK)
+clean-all:
+	rm -rf $(BUILDDIR) .patches-built
+
+distclean: clean-all
+	rm -rf $(DLDIR)
 	cd revanced-patches && ./gradlew clean -q
