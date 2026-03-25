@@ -1,5 +1,6 @@
 build/
 dl/
+chromium
 .patches-built
 *.keystore
 https-proxy

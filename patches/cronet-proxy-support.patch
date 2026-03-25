@@ -96,15 +96,3 @@ index 3ce700f953184..ca4b388eb606f 100644
    // monitored.
    bool bidi_stream_detect_broken_connection;
 
---- /dev/null
-+++ b/build/__init__.py
-@@ -0,0 +1 @@
-+
---- /dev/null
-+++ b/build/android/__init__.py
-@@ -0,0 +1 @@
-+
---- /dev/null
-+++ b/build/android/gyp/__init__.py
-@@ -0,0 +1 @@
-+

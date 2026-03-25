@@ -8,15 +8,23 @@
 #   make distclean    Remove everything including downloads
 
 # === Configuration (override with make VAR=value or environment) ===
-CRONET_VERSION       ?= 135.0.7012.3
 REVANCED_CLI_VERSION ?= 5.0.1
 APKMD_VERSION        ?= 2.0.10
 APP_PACKAGE          ?= com.youtube.s5
 YT_VERSION           ?= 20.05.46
 BASE_APK_NAME        ?= com.google.android.youtube@$(YT_VERSION).apk
 
-CRONET_SRC           ?= $(HOME)/src/cronet/chromium/src
-DEPOT_TOOLS          ?= $(HOME)/src/cronet/depot_tools
+# YouTube version → bundled Cronet version mapping.
+# Find with: unzip -l <youtube.apk> | grep libcronet
+CRONET_VERSION_20.05.46 := 133.0.6876.3
+CRONET_VERSION_20.12.46 := 135.0.7012.3
+
+CRONET_VERSION := $(CRONET_VERSION_$(YT_VERSION))
+$(if $(CRONET_VERSION),,$(error No Cronet version mapped for YT_VERSION=$(YT_VERSION). Add CRONET_VERSION_$(YT_VERSION) above.))
+
+CHROMIUM_DIR         := chromium
+CRONET_SRC           := $(CHROMIUM_DIR)/src
+DEPOT_TOOLS          := $(CHROMIUM_DIR)/depot_tools
 BC_JAR               ?= /usr/share/java/bcprov/bcprov.jar
 APK_JAR              ?= $(shell dirname "$$(readlink -f "$$(which apksigner)")")/lib/apksigner.jar
 
@@ -28,14 +36,15 @@ KS_TYPE              ?= BKS
 # === Derived paths ===
 BUILDDIR        := build
 DLDIR           := dl
-CRONET_SO       := $(DLDIR)/libcronet.$(CRONET_VERSION).so
+CRONET_SO_NAME  := libcronet.$(CRONET_VERSION).so
+CRONET_SO       := $(DLDIR)/$(CRONET_SO_NAME)
 REVANCED_CLI    := $(DLDIR)/revanced-cli.jar
 APKMD           := $(DLDIR)/apkmd
 BASE_APK        := $(DLDIR)/$(BASE_APK_NAME)
 PATCHED_APK     := $(BUILDDIR)/$(APP_PACKAGE)-patched.apk
 OUTPUT          := $(BUILDDIR)/$(APP_PACKAGE).apk
 
-CRONET_URL      := https://github.com/nikicat/youtube-proxy/releases/download/cronet-$(CRONET_VERSION)/$(CRONET_SO)
+CRONET_URL      := https://github.com/nikicat/youtube-proxy/releases/download/cronet-$(CRONET_VERSION)/$(CRONET_SO_NAME)
 REVANCED_CLI_URL := https://github.com/ReVanced/revanced-cli/releases/download/v$(REVANCED_CLI_VERSION)/revanced-cli-$(REVANCED_CLI_VERSION)-all.jar
 APKMD_URL       := https://github.com/tanishqmanuja/apkmirror-downloader/releases/download/v$(APKMD_VERSION)/apkmd
 
@@ -44,7 +53,7 @@ APKMD_URL       := https://github.com/tanishqmanuja/apkmirror-downloader/release
 # avoiding expanding hundreds of files as prerequisites.
 PATCHES_DIRS := revanced-patches/patches/src revanced-patches/extensions/shared/src
 
-.PHONY: all install uninstall uninstall-all clean clean-all distclean cronet-build
+.PHONY: all install uninstall uninstall-all clean clean-all distclean cronet-build chromium-init
 
 all: $(OUTPUT)
 
@@ -119,10 +128,10 @@ $(KEYSTORE):
 $(OUTPUT): $(PATCHED_APK) $(CRONET_SO) $(KEYSTORE)
 	@mkdir -p $(BUILDDIR)/lib/arm64-v8a
 	cp $(PATCHED_APK) $@.tmp
-	cp $(CRONET_SO) $(BUILDDIR)/lib/arm64-v8a/
-	# Replace Cronet .so: delete old entry (may not exist on first build) then add uncompressed.
-	@cd $(BUILDDIR) && zip -d $(notdir $@).tmp "lib/arm64-v8a/$(notdir $(CRONET_SO))" >/dev/null 2>&1 || true
-	cd $(BUILDDIR) && zip -0 $(notdir $@).tmp "lib/arm64-v8a/$(notdir $(CRONET_SO))"
+	cp $(CRONET_SO) $(BUILDDIR)/lib/arm64-v8a/$(CRONET_SO_NAME)
+	# Replace bundled Cronet .so with our proxy-enabled build (all architectures).
+	@zip -d $@.tmp "lib/*/$(CRONET_SO_NAME)" >/dev/null 2>&1 || true
+	cd $(BUILDDIR) && zip -0 $(notdir $@).tmp "lib/arm64-v8a/$(CRONET_SO_NAME)"
 	@zip -d $@.tmp "META-INF/*" >/dev/null 2>&1 || true
 	zipalign -f 4 $@.tmp $@.aligned
 	java -cp "$(APK_JAR):$(BC_JAR)" com.android.apksigner.ApkSignerTool sign \
@@ -137,9 +146,26 @@ $(OUTPUT): $(PATCHED_APK) $(CRONET_SO) $(KEYSTORE)
 	rm -f $@.tmp
 	@echo "==> Done: $@ ($$(du -h $@ | cut -f1))"
 
-# === Build Cronet from source (optional, rare) ===
+# === Chromium / Cronet (optional, build from source) ===
 
-cronet-build: patches/cronet-proxy-support.patch
+$(DEPOT_TOOLS):
+	git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git $@
+
+$(CRONET_SRC): $(DEPOT_TOOLS)
+	mkdir -p $(CHROMIUM_DIR)
+	cd $(CHROMIUM_DIR) && printf 'solutions=[{"name":"src","url":"https://chromium.googlesource.com/chromium/src.git","managed":False}]\ntarget_os=["android"]\n' > .gclient
+	cd $(CHROMIUM_DIR) && PATH="$(CURDIR)/$(DEPOT_TOOLS):$$PATH" gclient sync --no-history --nohooks
+
+# One-time setup: clone depot_tools and fetch Chromium source (~30 GB).
+chromium-init: $(CRONET_SRC)
+
+cronet-build: patches/cronet-proxy-support.patch | $(CRONET_SRC)
+	# Checkout the correct Chromium version and sync dependencies.
+	git -C "$(CRONET_SRC)" checkout -- .
+	git -C "$(CRONET_SRC)" fetch --depth=1 origin tag $(CRONET_VERSION)
+	git -C "$(CRONET_SRC)" checkout FETCH_HEAD
+	cd "$(CHROMIUM_DIR)" && PATH="$(CURDIR)/$(DEPOT_TOOLS):$$PATH" gclient sync --nohooks --force
+	# Apply proxy support patch if not already applied.
 	@if git -C "$(CRONET_SRC)" diff --quiet -- components/cronet; then \
 		echo "==> Applying Cronet proxy patch..."; \
 		git -C "$(CRONET_SRC)" apply "$(CURDIR)/patches/cronet-proxy-support.patch"; \
@@ -149,9 +175,9 @@ cronet-build: patches/cronet-proxy-support.patch
 	touch "$(CRONET_SRC)/build/__init__.py" \
 	      "$(CRONET_SRC)/build/android/__init__.py" \
 	      "$(CRONET_SRC)/build/android/gyp/__init__.py"
-	PATH="$(DEPOT_TOOLS):$$PATH" ninja -C "$(CRONET_SRC)/out/Cronet" cronet_package -j$$(nproc)
+	PATH="$(CURDIR)/$(DEPOT_TOOLS):$$PATH" ninja -C "$(CRONET_SRC)/out/Cronet" cronet_package -j$$(nproc)
 	mkdir -p $(DLDIR)
-	cp "$(CRONET_SRC)/out/Cronet/cronet/libs/arm64-v8a/libcronet.$(CRONET_VERSION).so" $(CRONET_SO)
+	cp "$(CRONET_SRC)/out/Cronet/cronet/libs/arm64-v8a/$(CRONET_SO_NAME)" $(CRONET_SO)
 	@echo "==> Built: $(CRONET_SO) ($$(du -h $(CRONET_SO) | cut -f1))"
 
 # === Cleanup ===
